@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Detección de Movimiento Redondeada</title>
+<style>
+body {
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  min-height:100vh;
+  background:#111;
+  color:#fff;
+  font-family:Arial,sans-serif;
+  margin:0;
+  padding:0;
+}
+h1 { margin-top:20px; font-size:2em; }
+select {
+  margin:15px 0;
+  padding:8px 12px;
+  font-size:16px;
+  border-radius:5px;
+  border:none;
+  outline:none;
+}
+canvas {
+  border-radius:10px;
+  box-shadow:0 0 25px rgba(255,0,0,0.6);
+  background:#000;
+}
+</style>
+</head>
+<body>
+<h1>Detección de Movimiento Redondeada</h1>
+<select id="cameraSelector">
+  <option value="normal">Normal</option>
+  <option value="contour">Detección con contorno</option>
+  <option value="onlyDetection">Solo detección</option>
+</select>
+
+<video id="video" width="640" height="480" autoplay style="display:none;"></video>
+<canvas id="canvas" width="640" height="480"></canvas>
+
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const cameraSelector = document.getElementById('cameraSelector');
+
+const width = canvas.width;
+const height = canvas.height;
+let previousFrame = null;
+let smoothMap = null;
+
+const threshold = 10; // sensibilidad para movimiento
+
+async function initCamera() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video:true });
+        video.srcObject = stream;
+        video.onloadedmetadata = () => requestAnimationFrame(detectMotion);
+    } catch(err) { console.error(err); }
+}
+
+// Suavizado rápido
+function blur(map, w, h) {
+    const out = new Float32Array(w*h);
+    for(let y=1; y<h-1; y++){
+        for(let x=1; x<w-1; x++){
+            const idx = y*w+x;
+            out[idx] = (
+                map[idx] + map[idx-1] + map[idx+1] +
+                map[idx-w] + map[idx+w] +
+                map[idx-w-1] + map[idx-w+1] +
+                map[idx+w-1] + map[idx+w+1]
+            ) / 9;
+        }
+    }
+    return out;
+}
+
+function detectMotion(){
+    ctx.clearRect(0,0,width,height);
+    ctx.drawImage(video,0,0,width,height);
+
+    const frame = ctx.getImageData(0,0,width,height);
+
+    if(previousFrame){
+        if(!smoothMap) smoothMap = new Float32Array(width*height);
+
+        for(let y=0;y<height;y++){
+            for(let x=0;x<width;x++){
+                const idx = y*width + x;
+                const i4 = idx*4;
+                const lum1 = 0.299*frame.data[i4] + 0.587*frame.data[i4+1] + 0.114*frame.data[i4+2];
+                const lum2 = 0.299*previousFrame.data[i4] + 0.587*previousFrame.data[i4+1] + 0.114*previousFrame.data[i4+2];
+                const diff = Math.abs(lum1-lum2);
+                const val = diff>threshold ? 1:0;
+                smoothMap[idx] = smoothMap[idx]*0.7 + val*0.3;
+            }
+        }
+
+        const mode = cameraSelector.value;
+
+        if(mode==="contour"){
+            ctx.save();
+            ctx.fillStyle='red';
+            for(let y=0;y<height;y+=2){  // puedes ajustar paso para rendimiento
+                for(let x=0;x<width;x+=2){
+                    const idx = y*width+x;
+                    if(smoothMap[idx]>0.15){
+                        ctx.beginPath();
+                        ctx.arc(x, y, 1.5, 0, Math.PI*2);
+                        ctx.fill();
+                    }
+                }
+            }
+            ctx.restore();
+        } else if(mode==="onlyDetection"){
+            const imageData = ctx.createImageData(width,height);
+            for(let y=0;y<height;y++){
+                for(let x=0;x<width;x++){
+                    const idx = y*width+x;
+                    if(smoothMap[idx]>0.15){
+                        const i4 = idx*4;
+                        imageData.data[i4]=255;
+                        imageData.data[i4+1]=0;
+                        imageData.data[i4+2]=0;
+                        imageData.data[i4+3]=255;
+                    }
+                }
+            }
+            ctx.putImageData(imageData,0,0);
+        }
+    }
+
+    previousFrame = frame;
+    requestAnimationFrame(detectMotion);
+}
+
+initCamera();
+</script>
+</body>
+</html>
